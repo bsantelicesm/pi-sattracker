@@ -1,134 +1,157 @@
+//---LIBS---
 #include <math.h>
+#include <EEPROM.h>
 
-#define AZ1 6
-#define AZ2 7
-#define EL1 8
-#define EL2 9
-#define AZEN 10
-#define ELEN 11
-//motor drive pins as stated in L298N datasheet
+#define FWD true
+#define REV false
+#define STOP 0
 
-#define AZFB A0
-#define ELFB A1
-//feedback pot pins
+#define AZCAL 10
+#define ELCAL 20
 
-float azimuth;
-float elevation;
+//---GLOBAL VARS---
+float azimuth = 0.0;
+float elevation = 0.0;
+
+float error = 0.5;
+
 String command;
-float setAz;
-float setEl;
-float offset = 0.5;
-//global variables
+//---OBJECT CLASSES---
+class Motor {
+  int enablePin;
+  int nonInvertingPin;
+  int invertingPin;
+  int feedbackPin;
 
-float pots2degrees(unsigned char axisPot) { //axisPot corresponds to the feedback pot pin
-  float degree = (analogRead(axisPot) * 0.352); //degrees in full length float
-  return round(degree); //round to one decimal place
+  float calibration;
+  int calAddr;
+
+  public:
+  int travelRange;
+
+  Motor(int enable, int noninverting, int inverting, int feedback, int range, int cal) {
+    enablePin = enable;
+    nonInvertingPin = noninverting;
+    invertingPin = inverting;
+    feedbackPin = feedback;
+    travelRange = range;
+    calAddr = cal;
+
+  }
+
+  void init() {
+    int pins[4] = {enablePin, nonInvertingPin, invertingPin, feedbackPin};
+    for (int i=0; i=4; i++) {
+      pinMode(pins[i], OUTPUT);
+    }
+    float eepromData;
+    EEPROM.get(calAddr, eepromData);
+    if (isnan(eepromData)) {
+      EEPROM.put(calAddr, 0);
+    }
+    else {
+      calibration = eepromData;
+    }
+  }
+
+  float angle() {
+   float angle = map(analogRead(feedbackPin) - calibration, 0, 1023, 0, travelRange);
+    return angle;
+  }
+
+  void move(bool direction, int speed) {
+    if (direction = FWD) {
+      digitalWrite(nonInvertingPin, HIGH);
+      digitalWrite(invertingPin, LOW);
+    }
+    else if (direction = REV) {
+      digitalWrite(nonInvertingPin, LOW);
+      digitalWrite(invertingPin, HIGH);
+    }
+
+    analogWrite(enablePin, speed);
+  }
+
+  void calibrate() {
+    calibration = analogRead(feedbackPin);
+    EEPROM.put(calAddr, calibration);
+  }
+
+};
+//---OBJECT CALLS---
+Motor AZ(2, 3, 4, 5, A0, AZCAL);
+Motor EL(6, 7, 8, 9, A1, ELCAL);
+//---FUNCTIONS---
+
+void easycommProcess(String command) {
+  if (command.startsWith("AZ EL")) {
+    Serial.print("AZ=");
+    Serial.print(AZ.angle());
+    Serial.print(" EL=");
+    Serial.print(EL.angle());
+  }
+
+  else if(command.startsWith("AZ=")) {
+    int azimuthEquals = command.indexOf("=");
+    int elevationEquals = command.indexOf("=", azimuthEquals + 1);
+
+    azimuth = command.substring(azimuthEquals, azimuthEquals + 5).toFloat();
+    elevation = command.substring(elevationEquals, elevationEquals + 5).toFloat();
+  }
 }
 
-//main motor drive function
-//axis: 0=Az, 1=El
-//direction: 0=FWD, 1=REV
-//speed: integer between 1 and 4
-void motorDrive(int axis, int dir, int spd) {
-    int motorA;
-    int motorB;
-    int motorEN; //variables for storing pins from the selected motor
-    if (axis == 0) { //pins for az imuth axis
-      motorA = 6;
-      motorB = 7;
-      motorEN = 10;
-    }
-   else if (axis == 1) { //pins for elevation axis
-      motorA = 8;
-      motorB = 9;
-      motorEN = 11;
-    }
-
-    if (dir == 0) { //lM298N forward mode
-      digitalWrite(motorA, HIGH); 
-      digitalWrite(motorB, LOW);
-    }
-    else if (dir == 1) { //LM298N reverse mode
-      digitalWrite(motorA, LOW);
-      digitalWrite(motorB, HIGH);
-    }
-
-    if (spd == 0) {
-      digitalWrite(motorEN, LOW); //shutdown motor by pulling the enable pin low
-    }
-    else if (spd == 1) {
-      digitalWrite(motorEN, HIGH); //turn un by pulling enable pin high
-    }
+bool withinRange(float var, float lowerLimit, float upperLimit) {
+  if ((var > lowerLimit) && (var < upperLimit)) {
+    return true;
   }
-
-void processCommands() { //processes EasyComm I commands coming from serial port.
-  int firstSpace;
-  int secondSpace; //variables to save the location of the first and second space
-  //each command is terminated with a space
-
-  if (Serial.available() > 0) { //check serial buffer
-      command = Serial.readString();  //read command string
-      if (command.startsWith("AZ EL")) {  //check for angle query command
-        Serial.print("AZ=");
-        Serial.print(azimuth);
-        Serial.print(" ");
-        Serial.print("EL=");
-        Serial.println(elevation); //print current angles
-      }
-      else if (command.startsWith("AZ")) { //check for angle order command
-        firstSpace = command.indexOf(' '); //find first space
-        secondSpace = command.indexOf(' ', firstSpace + 1); //find second space
-
-        String stringAz = (command.substring(3, firstSpace));
-        String stringEl = (command.substring(firstSpace + 4, secondSpace)); //save substrings
-        setAz = stringAz.toFloat();
-        setEl = stringEl.toFloat(); //convert strings to floats and save on global variables
-        Serial.print("AZ=");
-        Serial.print(setAz);
-        Serial.print(" ");
-        Serial.print("EL=");
-        Serial.println(setEl);  //return set values on the serial port
-      }
+  else {
+    return false;
   }
+}
+
+void calibrate2axis() {
+  AZ.calibrate();
+  EL.calibrate();
+}
+
+int getSpeed(float delta, int range) {
+  return (map(abs(delta), 0, range, 0, 205) + 50); 
 }
 
 void setup() {
-  pinMode(AZ1, OUTPUT);
-  pinMode(AZ2, OUTPUT);
-  pinMode(AZEN, OUTPUT); //pin mode for azimuth pins
-
-  pinMode(EL1, OUTPUT);
-  pinMode(EL2, OUTPUT);
-  pinMode(ELEN, OUTPUT); //pin mode for elevation pins
-
   Serial.begin(9600); //begin serial communications @ 9600 baud
+  attachInterrupt(digitalPinToInterrupt(2), calibrate2axis, FALLING);
 }
 
 void loop() {
-  azimuth = pots2degrees(AZFB);
-  elevation = pots2degrees(ELFB); //save current rotor position
-
-  processCommands(); //process commands coming from computer
-
-//azimuth drive control
-  if ((azimuth + offset) < setAz) { //forwards if azimuth is lower than set
-    motorDrive(0, 0, 1);
+  if (Serial.available() > 0) {
+    easycommProcess(Serial.readString());
   }
-  else if ((azimuth - offset) > setAz) { //backwards if azimuth is higher than set
-    motorDrive(0, 1, 1);
+  if (withinRange(AZ.angle(), azimuth - error, azimuth + error)) {
+    AZ.move(FWD, STOP);
   }
-  else { //stop if equal
-    motorDrive(0, 1, 0);
+  else {
+    float AzDelta = azimuth - AZ.angle();
+    int AzSpeed = getSpeed(AzDelta, AZ.travelRange);
+    
+    if (AzDelta > 0) {
+      AZ.move(FWD, AzSpeed);
+    }
+    else if (AzDelta < 0) {
+      AZ.move(REV, AzSpeed);
+    }
   }
-
-//elevation drive control
-  if ((elevation + offset) < setEl) { //forwards if elevation is lower than set
-    motorDrive(1, 0, 1);
+  if (withinRange(EL.angle(), elevation - error, elevation + error)) {
+    EL.move(FWD, STOP);
   }
-  else if ((elevation - offset) > setEl) { //backwards if elevation is higher than set
-    motorDrive(1, 1, 1);
-  }
-  else { //stop if equal
-    motorDrive(1, 1, 0);
+  else {
+    float ElDelta = azimuth - EL.angle();
+    int ElSpeed = getSpeed(ElDelta, EL.travelRange);
+    if (ElDelta > 0) {
+      EL.move(FWD, ElSpeed);
+    }
+    else if (ElDelta < 0) {
+      EL.move(REV, ElSpeed);
+    }
   }
 }
