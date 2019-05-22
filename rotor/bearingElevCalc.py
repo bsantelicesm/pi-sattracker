@@ -1,6 +1,10 @@
 import math
 import serial
 import aprslib
+import threading
+
+packet = "" #variable for storing last recieved packet
+packetUnread = False #has the packet been read?
 
 class PolarCoordinate:  #object for storing and operating locations in 3D polar space.
     earthRadius = 6371000 #radius of the earth, for calculations
@@ -30,7 +34,7 @@ class PolarCoordinate:  #object for storing and operating locations in 3D polar 
         commHopDist = math.sqrt(math.pow(self.altitude + self.earthRadius, 2) + math.pow(point.altitude + self.earthRadius, 2) - 2 * (self.altitude + self.earthRadius) * (point.altitude + self.earthRadius) * math.cos(arcAngle))
         return commHopDist
 
-    def elevationTo(self, point): #returns elevation between two points. NOT YET WORKING.
+    def elevationTo(self, point): #returns elevation between two points.
         arcAngle = self.distanceTo(point) / self.earthRadius
         c = self.commHopDistance(point)
         desiredVertex = math.asin(((point.altitude + self.earthRadius) * math.sin(arcAngle)) / c)
@@ -56,23 +60,54 @@ class EasyComm: #manage connection between an EasyComm I antenna rotor, connecte
         self.measuredAzimuth = float(az[3:])
         self.measuredElevation = float(el[3:]) #parse data and return measured data.
 
-class APRS: #gets data from APRS-IS servers and returns important data.
+class APRS: #gets data from APRS-IS servers and returns useful data.
 
     def __init__(self, callsign, target):
         self.server = aprslib.IS(callsign) #aprslib internet services connection
         self.target = target
 
-    def callback(self, text):
-        if "to" in text:
-            if self.target in text["to"]:
-                return text
+    def callback(self, text): #consumer callback function
+        if "from" in text:
+            if self.target in text["from"]: #find target callsign
+                packet = text
+                packetUnread = True #save packet and mark as unread
 
     def start(self):
         self.server.connect()
-        self.server.consumer(callback)
+        self.server.consumer(self.callback) #start a connection with IS and start recieving data.
 
-print "SPEL Radiosonde Tracker Station Software DEV v0.1"
-call = input("Your SSID: ")
-tget = input("Target SSID: ")
+station = PolarCoordinate(0, 0, 0)
+sonde = PolarCoordinate(0, 0, 0) #define station and sonde objects
+
+rotor = EasyComm("COM2") #define rotor object
+
+print "SPEL Radiosonde Tracker Station Software DEV v0.5"
+print "Please input the station's location (decimal angles, meters)"
+station.latitude, station.longitude, station.altitude = input("(lat, lon, alt):") #input location data for station
+
 print "Initializing APRS Service..."
-aprsis = APRS(call, tget)
+call = raw_input("Your SSID: ")
+tget = raw_input("Target SSID: ") #input data for APRS
+aprsis = APRS(call, tget) #create APRS object
+
+aprsThread = threading.Thread(1, aprsis.start(), None)
+aprsThread.start() #create and start aprs consumer thread
+print "Started!" #progress flag
+
+while True:
+    if (packetUnread):
+        sonde.latitude = packet["latitude"]
+        sonde.longitude = packet["longitude"]
+        sonde.altitude = 0 packet["altitude"] * 0.3048 #get data from packet
+
+        print "Packet Recieved!: " + aprsis.target + " lat:" + str(sonde.latitude) + " lon:" + str(sonde.longitude) + " alt:" + str(sonde.altitude) #print location from packet
+        distance = station.distanceTo(sonde)
+        azimuth = station.azimuthTo(sonde)
+        elevation = station.elevationTo(sonde)
+        commHop = station.commHopDistance(sonde) #calculate distance, azimuth, elevation, and hop distance
+        print "dst:" + str(distance) + " azi:" + str(azimuth) + " ele:" + str(elevation) + " hop:" + str(commHop) #print above values
+
+        rotor.send(azimuth, elevation) #send AZ-EL data to rotor
+        print "Rotating...\n" #progress flag
+
+        packetUnread = False #mark packet as read.
