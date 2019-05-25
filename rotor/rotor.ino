@@ -40,8 +40,8 @@ class Motor {
   }
 
   void init() {
-    int pins[4] = {enablePin, nonInvertingPin, invertingPin, feedbackPin};
-    for (int i=0; i=4; i++) {
+    int pins[3] = {enablePin, nonInvertingPin, invertingPin};
+    for (int i=0; i=2; i++) {
       pinMode(pins[i], OUTPUT);
     }
     float eepromData;
@@ -115,7 +115,7 @@ void calibrate2axis() {
 }
 
 int getSpeed(float delta, int range) {
-  return (map(abs(delta), 0, range, 0, 205) + 50); 
+  return (map(abs(delta), 0, range, 0, 205) + 50);
 }
 
 void setup() {
@@ -133,7 +133,7 @@ void loop() {
   else {
     float AzDelta = azimuth - AZ.angle();
     int AzSpeed = getSpeed(AzDelta, AZ.travelRange);
-    
+
     if (AzDelta > 0) {
       AZ.move(FWD, AzSpeed);
     }

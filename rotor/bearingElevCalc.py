@@ -2,6 +2,7 @@ import math
 import serial
 import aprslib
 import threading
+import time
 
 packet = "" #variable for storing last recieved packet
 packetUnread = False #has the packet been read?
@@ -111,3 +112,5 @@ while True:
         print "Rotating...\n" #progress flag
 
         packetUnread = False #mark packet as read.
+
+    time.sleep(0.1)
